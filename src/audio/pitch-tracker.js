@@ -42,27 +42,63 @@ export class PitchTracker {
     this._rmsHistory = []; // [{t, db}] within ONSET_RMS_WINDOW_MS
     this._aboveOnset = false;
     this._onsetId = 0;
+    this._lastProcessTime = 0;
+    this._latest = { freq: null, clarity: 0, rms: 0, onsetId: 0 };
+  }
+
+  /** Most recently processed reading, from whichever source last fed this tracker. */
+  get latest() {
+    return this._latest;
   }
 
   /**
+   * True once more than maxAgeMs has passed since a reading was processed —
+   * used on the worklet path, where messages arrive asynchronously, to tell
+   * a genuinely stale reading apart from a held note.
+   */
+  isStale(nowMs = performance.now(), maxAgeMs = 100) {
+    return nowMs - this._lastProcessTime > maxAgeMs;
+  }
+
+  /**
+   * Main-thread path: run the detector synchronously on an AnalyserNode buffer.
    * @param {Float32Array} data
    * @param {number} sampleRate
    * @param {number} [nowMs]
+   */
+  update(data, sampleRate, nowMs = performance.now()) {
+    return this._process(this._detector.detect(data, sampleRate), nowMs);
+  }
+
+  /**
+   * Worklet path: consume a { freq, clarity, rms } message posted by
+   * pitch-worklet.js. The render loop never calls this directly — it only
+   * reads `.latest` — this runs from the worklet's port.onmessage handler.
+   */
+  ingest(raw, nowMs = performance.now()) {
+    return this._process(raw, nowMs);
+  }
+
+  /**
    * @returns {{freq:number|null, clarity:number, rms:number, onsetId:number}}
    *   freq is null when the reading was rejected by a confidence gate; onsetId
    *   still advances in that case (silence-to-attack is the main onset case).
    */
-  update(data, sampleRate, nowMs = performance.now()) {
-    const raw = this._detector.detect(data, sampleRate);
-    const rmsDb = raw ? 20 * Math.log10(Math.max(raw.rms, 1e-10)) : SILENT_RMS_DB;
+  _process(raw, nowMs) {
+    const freq = raw?.freq ?? null;
+    const clarity = raw?.clarity ?? 0;
+    const rms = raw?.rms ?? 0;
+    const rmsDb = freq != null ? 20 * Math.log10(Math.max(rms, 1e-10)) : SILENT_RMS_DB;
+
+    this._lastProcessTime = nowMs;
 
     // Onset tracking must see every frame, including rejected ones — the most
     // common onset is silence followed by an attack, which gating would hide.
     this._trackOnset(rmsDb, nowMs);
 
-    const accepted = raw != null
-      && raw.clarity >= MIN_CLARITY
-      && raw.freq >= MIN_FREQ && raw.freq <= MAX_FREQ
+    const accepted = freq != null
+      && clarity >= MIN_CLARITY
+      && freq >= MIN_FREQ && freq <= MAX_FREQ
       && rmsDb >= NOISE_GATE_DB;
 
     if (!accepted) {
@@ -70,11 +106,13 @@ export class PitchTracker {
       this._octaveJumpStreak = 0;
       this._pitchJumpStreak = 0;
       this._lastOutputMidi = null;
-      return { freq: null, clarity: raw?.clarity ?? 0, rms: raw?.rms ?? 0, onsetId: this._onsetId };
+      this._latest = { freq: null, clarity, rms, onsetId: this._onsetId };
+      return this._latest;
     }
 
-    const outputMidi = this._resolvePitch(raw.freq);
-    return { freq: midiToFreq(outputMidi), clarity: raw.clarity, rms: raw.rms, onsetId: this._onsetId };
+    const outputMidi = this._resolvePitch(freq);
+    this._latest = { freq: midiToFreq(outputMidi), clarity, rms, onsetId: this._onsetId };
+    return this._latest;
   }
 
   _trackOnset(rmsDb, nowMs) {

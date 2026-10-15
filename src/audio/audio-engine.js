@@ -5,6 +5,8 @@ export class AudioEngine {
     this.ctx = null;
     this.mixBus = null;
     this.pitchAnalyser = null;
+    this.pitchWorkletNode = null;
+    this.pitchWorkletSupported = false;
     this.bridgeNode = null; // MediaStreamDestination for secondary outputs
 
     /** @type {Map<number, InputChannel>} */
@@ -31,7 +33,37 @@ export class AudioEngine {
     this.bridgeNode = this.ctx.createMediaStreamDestination();
     this.mixBus.connect(this.bridgeNode);
 
+    await this._initPitchWorklet();
+
     return this.ctx;
+  }
+
+  /**
+   * Run pitch detection off the main thread via an AudioWorklet. Falls back
+   * silently (pitchWorkletSupported stays false) if the browser lacks
+   * AudioWorklet support or module loading fails — callers then keep using
+   * getPitchData() + PitchTracker.update() on the rAF loop instead.
+   */
+  async _initPitchWorklet() {
+    this.pitchWorkletNode = null;
+    this.pitchWorkletSupported = false;
+    if (!this.ctx.audioWorklet) return;
+    try {
+      await this.ctx.audioWorklet.addModule(new URL('./pitch-worklet.js', import.meta.url));
+      const node = new AudioWorkletNode(this.ctx, 'pitch-processor', {
+        numberOfInputs: 1,
+        numberOfOutputs: 0,
+        channelCount: 1,
+        channelCountMode: 'explicit',
+      });
+      this.mixBus.connect(node);
+      this.pitchWorkletNode = node;
+      this.pitchWorkletSupported = true;
+    } catch (err) {
+      console.warn('Pitch worklet unavailable, falling back to AnalyserNode pitch detection:', err);
+      this.pitchWorkletNode = null;
+      this.pitchWorkletSupported = false;
+    }
   }
 
   // --- Input channels ---
@@ -424,6 +456,7 @@ export class AudioEngine {
     this.mixBus.connect(this.pitchAnalyser);
     this.bridgeNode = this.ctx.createMediaStreamDestination();
     this.mixBus.connect(this.bridgeNode);
+    await this._initPitchWorklet();
 
     // Reconnect inputs
     for (const saved of savedInputs) {

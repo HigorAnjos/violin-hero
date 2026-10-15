@@ -298,9 +298,17 @@ const outputMeters = new Map();
 let animFrameId = null;
 let engineReady = false;
 
+/** Route the pitch worklet's messages into the tracker (no-op if unsupported). */
+function wirePitchWorklet() {
+  if (engine.pitchWorkletSupported) {
+    engine.pitchWorkletNode.port.onmessage = (e) => pitchTracker.ingest(e.data, performance.now());
+  }
+}
+
 async function ensureEngine() {
   if (engineReady) return;
   await engine.init();
+  wirePitchWorklet();
   engineReady = true;
   startRenderLoop();
 }
@@ -394,9 +402,10 @@ function updatePitchDebug(reading) {
   }
   const rmsDb = reading.rms > 0 ? 20 * Math.log10(reading.rms) : -100;
   pitchDebugEl.textContent =
-    `freq:   ${reading.freq != null ? reading.freq.toFixed(1) + ' Hz' : '—'}\n`
+    `source:  ${engine.pitchWorkletSupported ? 'worklet' : 'rAF fallback'}\n`
+    + `freq:    ${reading.freq != null ? reading.freq.toFixed(1) + ' Hz' : '—'}\n`
     + `clarity: ${reading.clarity.toFixed(3)}\n`
-    + `rms:    ${rmsDb.toFixed(1)} dBFS\n`
+    + `rms:     ${rmsDb.toFixed(1)} dBFS\n`
     + `onsetId: ${reading.onsetId}`;
 }
 
@@ -429,11 +438,23 @@ function startRenderLoop() {
       if (ch != null) inputPicker.updateLevel(engine.getInputLevel(ch).rmsDb);
     }
 
-    // Pitch detection (every frame while a song is playing, otherwise every other frame)
+    // Pitch detection. With the worklet, detection already ran on the audio
+    // thread — just read its last result (every frame; it's a cheap getter).
+    // Without it, fall back to running the detector here on the AnalyserNode
+    // buffer (every frame while a song is playing, otherwise every other frame).
     pitchFrame++;
-    if (songActive || (onWorkstation && pitchFrame % 2 === 0)) {
-      const { data, sampleRate } = engine.getPitchData();
-      const reading = pitchTracker.update(data, sampleRate);
+    const usingWorklet = engine.pitchWorkletSupported;
+    if (usingWorklet ? (songActive || onWorkstation) : (songActive || (onWorkstation && pitchFrame % 2 === 0))) {
+      let reading;
+      if (usingWorklet) {
+        reading = pitchTracker.latest;
+        // A stale worklet message (thread stalled/glitched) must not look like
+        // a held note — the song-player watchdog relies on freq going null.
+        if (pitchTracker.isStale()) reading = { ...reading, freq: null };
+      } else {
+        const { data, sampleRate } = engine.getPitchData();
+        reading = pitchTracker.update(data, sampleRate);
+      }
       if (onWorkstation) {
         pitchDisplay.update(reading.freq);
         tuningPanel.update(reading.freq);
@@ -489,6 +510,7 @@ mixer.onBufferSizeChange = async (samples) => {
   }
 
   const newCtx = await engine.reinitWithBufferSize(samples);
+  wirePitchWorklet();
 
   // Recreate metronome engine with new context
   if (newCtx) {
