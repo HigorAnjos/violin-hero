@@ -1,6 +1,6 @@
 import { AudioEngine } from './audio/audio-engine.js';
 import { DeviceManager } from './audio/device-manager.js';
-import { PitchDetector } from './audio/pitch-detector.js';
+import { PitchTracker } from './audio/pitch-tracker.js';
 import { MetronomeEngine } from './audio/metronome-engine.js';
 import { MixerPanel } from './ui/mixer.js';
 import { LevelMeter } from './ui/meters.js';
@@ -53,7 +53,7 @@ getVersionInfo().then(({ bundle, native }) => {
 
 const engine = new AudioEngine();
 const deviceManager = new DeviceManager();
-const pitchDetector = new PitchDetector();
+const pitchTracker = new PitchTracker();
 
 const pitchSection = document.getElementById('pitch-section');
 const tuningSection = document.getElementById('tuning-section');
@@ -377,6 +377,29 @@ async function switchOutputDevice(channelId, deviceId) {
   }
 }
 
+// --- Pitch debug overlay (?debug=pitch) — for calibrating the tracker's thresholds ---
+
+const pitchDebugEnabled = new URLSearchParams(location.search).get('debug') === 'pitch';
+let pitchDebugEl = null;
+
+function updatePitchDebug(reading) {
+  if (!pitchDebugEnabled) return;
+  if (!pitchDebugEl) {
+    pitchDebugEl = document.createElement('div');
+    pitchDebugEl.id = 'pitch-debug';
+    pitchDebugEl.style.cssText = 'position:fixed;bottom:8px;left:8px;z-index:9999;'
+      + 'background:rgba(0,0,0,0.75);color:#9fe8a4;font:12px/1.4 monospace;'
+      + 'padding:6px 10px;border-radius:4px;white-space:pre;pointer-events:none;';
+    document.body.appendChild(pitchDebugEl);
+  }
+  const rmsDb = reading.rms > 0 ? 20 * Math.log10(reading.rms) : -100;
+  pitchDebugEl.textContent =
+    `freq:   ${reading.freq != null ? reading.freq.toFixed(1) + ' Hz' : '—'}\n`
+    + `clarity: ${reading.clarity.toFixed(3)}\n`
+    + `rms:    ${rmsDb.toFixed(1)} dBFS\n`
+    + `onsetId: ${reading.onsetId}`;
+}
+
 // --- Render loop ---
 
 function startRenderLoop() {
@@ -410,14 +433,16 @@ function startRenderLoop() {
     pitchFrame++;
     if (songActive || (onWorkstation && pitchFrame % 2 === 0)) {
       const { data, sampleRate } = engine.getPitchData();
-      const freq = pitchDetector.detect(data, sampleRate);
+      const reading = pitchTracker.update(data, sampleRate);
       if (onWorkstation) {
-        pitchDisplay.update(freq);
-        tuningPanel.update(freq);
-        fingerboard.update(freq);
-        if (scaleTrainer.active) scaleTrainer.update(freq);
+        pitchDisplay.update(reading.freq);
+        tuningPanel.update(reading.freq);
+        fingerboard.update(reading.freq);
+        if (scaleTrainer.active) scaleTrainer.update(reading.freq);
       }
-      if (songActive) songPlayer.update(freq);
+      // Item 2 will pass the full reading (for onset-aware judging); for now keep the old contract.
+      if (songActive) songPlayer.update(reading.freq);
+      updatePitchDebug(reading);
     }
 
     // Latency display (every frame — outputLatency updates dynamically)

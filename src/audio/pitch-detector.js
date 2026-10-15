@@ -12,7 +12,8 @@ export class PitchDetector {
 
   /**
    * Detect pitch from float time-domain audio data.
-   * Returns frequency in Hz, or null if no clear pitch.
+   * Returns { freq, clarity, rms } in Hz/0-1/linear, or null if no periodicity
+   * was found at all (the caller's PitchTracker applies the real confidence gates).
    */
   detect(data, sampleRate) {
     // Analyse only the most recent samples: an integration window of ~1024
@@ -29,9 +30,10 @@ export class PitchDetector {
     }
     const yinBuffer = this._yinBuffer;
 
-    // Quick silence gate
+    // Quick exit on near-total silence only; PitchTracker owns the real dBFS gate.
     let energy = 0;
     for (let i = offset; i < offset + W + tauMax; i++) energy += data[i] * data[i];
+    const rms = Math.sqrt(energy / (W + tauMax));
     if (energy / (W + tauMax) < 1e-7) return null;
 
     // Step 1: Squared difference function
@@ -68,6 +70,9 @@ export class PitchDetector {
 
     if (tauEstimate === -1) return null;
 
+    // Confidence: 1 - the normalized difference at the dip, before interpolation.
+    const clarity = 1 - yinBuffer[tauEstimate];
+
     // Step 4: Parabolic interpolation for sub-sample accuracy
     const t = tauEstimate;
     let betterTau;
@@ -87,6 +92,6 @@ export class PitchDetector {
     // but allow wider for harmonics and other instruments
     if (frequency < 50 || frequency > 5000) return null;
 
-    return frequency;
+    return { freq: frequency, clarity, rms };
   }
 }
