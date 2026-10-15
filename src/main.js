@@ -440,8 +440,7 @@ function startRenderLoop() {
         fingerboard.update(reading.freq);
         if (scaleTrainer.active) scaleTrainer.update(reading.freq);
       }
-      // Item 2 will pass the full reading (for onset-aware judging); for now keep the old contract.
-      if (songActive) songPlayer.update(reading.freq);
+      if (songActive) songPlayer.update(reading);
       updatePitchDebug(reading);
     }
 

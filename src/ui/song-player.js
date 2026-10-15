@@ -262,6 +262,8 @@ export class SongPlayer {
     this.failed = false;
     this._particles = [];
     this._popups = [];
+    this._lastHitMidi = null;
+    this._lastHitOnsetId = null;
 
     for (const n of this.notes) {
       n.state = 'pending';
@@ -269,6 +271,7 @@ export class SongPlayer {
       n.firstMatch = null;
       n.cents = null;
       n.holdFrames = 0;
+      n.hitOnsetId = null;
     }
     for (const p of this.phrases) {
       p.level = null;
@@ -433,12 +436,16 @@ export class SongPlayer {
     }
   }
 
-  /** Called by the app's render loop with the latest detected frequency. */
-  update(freq) {
-    this._freq = freq;
+  /**
+   * Called by the app's render loop with the latest PitchTracker reading
+   * ({ freq, clarity, rms, onsetId }), or null from the watchdog when pitch
+   * data has gone stale.
+   */
+  update(reading) {
+    this._freq = reading?.freq ?? null;
     this._freqTime = performance.now();
-    if (this._state === 'tuning') this._updateTuning(freq);
-    else if (this._state === 'playing') this._judge(freq);
+    if (this._state === 'tuning') this._updateTuning(this._freq);
+    else if (this._state === 'playing') this._judge(reading);
   }
 
   // ───────────────────────────── Judging ─────────────────────────────
@@ -453,11 +460,14 @@ export class SongPlayer {
     return n.minLevel <= lvl;
   }
 
-  _judge(freq) {
+  _judge(reading) {
     const t = this._evalSec();
     const early = EARLY * this.speed;
     const late = LATE * this.speed;
     const tol = this.settings.tolerance;
+
+    const freq = reading?.freq ?? null;
+    const onsetId = reading?.onsetId ?? null;
 
     let midiF = null;
     if (freq) midiF = 69 + 12 * Math.log2(freq / 440);
@@ -476,11 +486,16 @@ export class SongPlayer {
       if (midiF == null) continue;
       const cents = (midiF - n.midi) * 100;
       if (Math.abs(cents) <= tol) {
+        // Same pitch as the last note we hit: require a newer onset (a fresh
+        // bow attack) rather than letting one held note satisfy several notes.
+        if (this._lastHitMidi === n.midi && onsetId != null && onsetId <= this._lastHitOnsetId) {
+          continue;
+        }
         if (n.firstMatch == null) n.firstMatch = t;
         n.frames++;
         n.cents = n.cents == null ? cents : n.cents * 0.6 + cents * 0.4;
         const need = n.durSec / this.speed < 0.18 ? 1 : 2;
-        if (n.frames >= need) this._registerHit(n);
+        if (n.frames >= need) this._registerHit(n, onsetId);
         break; // one detection satisfies one note
       }
     }
@@ -496,8 +511,11 @@ export class SongPlayer {
     this._evaluatePhrases(t);
   }
 
-  _registerHit(n) {
+  _registerHit(n, onsetId) {
     n.state = 'hit';
+    n.hitOnsetId = onsetId;
+    this._lastHitMidi = n.midi;
+    this._lastHitOnsetId = onsetId;
     const errReal = (n.firstMatch - n.sec) / this.speed;
     const perfect = Math.abs(errReal) < 0.08 && Math.abs(n.cents ?? 0) < 20;
     n.grade = perfect ? 'perfect' : 'good';
@@ -699,6 +717,7 @@ export class SongPlayer {
       n.frames = 0;
       n.firstMatch = null;
       n.cents = null;
+      n.hitOnsetId = null;
     }
     for (const p of this.phrases) {
       p.evaluated = false;
@@ -706,6 +725,8 @@ export class SongPlayer {
       p.total = 0;
       p.level = null;
     }
+    this._lastHitMidi = null;
+    this._lastHitOnsetId = null;
     this._saveDynamicLevels();
     this._seek(this.rangeStart - 2 * this.beatSec);
   }
