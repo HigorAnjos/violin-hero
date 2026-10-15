@@ -17,9 +17,10 @@ import { getProgress, saveProgress, getSettings, saveSettings } from '../songs/p
  */
 
 const STRING_COLORS = {
-  // Workstation palette: muted, ink-like hues that read on the navy stage
-  C: '#5fae6a', G: '#d9894a', D: '#5b93d6', A: '#d8b04a', E: '#cf5c5c',
-  B: '#9b7fcf', 'F#': '#c97aa8', 'C#': '#5fb0a8', F: '#c97aa8',
+  // GDAE: neon palette from the violin-hero-design-system (violet/magenta/cyan/yellow),
+  // which reads well against the canvas's existing dark navy gradient.
+  G: '#9d5cff', D: '#ff2bd6', A: '#00e5ff', E: '#ffe14d',
+  C: '#5fae6a', B: '#9b7fcf', 'F#': '#c97aa8', 'C#': '#5fb0a8', F: '#c97aa8',
 };
 const FALLBACK_COLORS = ['#d9894a', '#5b93d6', '#d8b04a', '#cf5c5c', '#9b7fcf', '#5fae6a'];
 const FONT = "Georgia, 'Palatino Linotype', Palatino, serif";
