@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "violin-hero-songs": {
+      "command": "node",
+      "args": ["mcp-songs/server.js"]
+    }
+  }
+}

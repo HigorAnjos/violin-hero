@@ -1,0 +1,15 @@
+{
+  "name": "violin-hero-song-mcp",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP server exposing tools to register, validate, list and remove songs in the Violin Hero built-in library.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^3.24.0"
+  }
+}

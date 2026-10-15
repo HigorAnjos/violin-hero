@@ -5,6 +5,7 @@ import classical from './classical.js';
 import holidayHymns from './holiday-hymns.js';
 import rockBlues from './rock-blues.js';
 import technique from './technique.js';
+import aiAdded from './ai-added.js';
 
 /**
  * Built-in song library. Every melody is public domain (traditional, or by
@@ -19,6 +20,7 @@ export const BUILTIN_SONGS = [
   ...holidayHymns,
   ...rockBlues,
   ...technique,
+  ...aiAdded,
 ].map(s => ({ ...s, source: 'builtin' }));
 
 export const GENRES = [
