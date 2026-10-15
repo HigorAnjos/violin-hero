@@ -1,7 +1,7 @@
 import { BUILTIN_SONGS } from './library/index.js';
 import { parseABC } from './abc-parser.js';
 import { buildChart } from './song-model.js';
-import { getUserSongs, saveUserSongs } from './progress-store.js';
+import { getUserSongs, saveUserSongs, getProgress, saveProgress } from './progress-store.js';
 
 /**
  * Song catalog: built-in library + user songs (imported ABC / MIDI / The Session).
@@ -75,4 +75,37 @@ export function removeUserSong(id) {
   saveUserSongs(getUserSongs().filter(s => s.id !== id));
   parsedCache.delete(id);
   for (const k of [...chartCache.keys()]) if (k.startsWith(id + '|')) chartCache.delete(k);
+}
+
+const BACKUP_VERSION = 1;
+
+/** Export every My Songs entry plus its progress/scores as a JSON-serializable backup. */
+export function exportUserSongs() {
+  const songs = getUserSongs();
+  const progress = {};
+  for (const s of songs) progress[s.id] = getProgress(s.id);
+  return { version: BACKUP_VERSION, exportedAt: Date.now(), songs, progress };
+}
+
+/**
+ * Restore a backup produced by exportUserSongs(). Songs are merged by id: an
+ * id already in My Songs is overwritten, so re-importing the same backup is
+ * a no-op rather than creating duplicates. Returns the number of songs restored.
+ */
+export function importUserSongs(data) {
+  if (!data || !Array.isArray(data.songs)) throw new Error('Not a valid Song Play backup file');
+  const byId = new Map(getUserSongs().map(s => [s.id, s]));
+  for (const s of data.songs) {
+    if (!s.id || !s.title) continue;
+    byId.set(s.id, s);
+    parsedCache.delete(s.id);
+    for (const k of [...chartCache.keys()]) if (k.startsWith(s.id + '|')) chartCache.delete(k);
+  }
+  saveUserSongs([...byId.values()]);
+  if (data.progress) {
+    for (const [id, p] of Object.entries(data.progress)) {
+      if (byId.has(id)) saveProgress(id, p);
+    }
+  }
+  return data.songs.length;
 }

@@ -1,7 +1,7 @@
 import { CustomDropdown } from './custom-dropdown.js';
 import { TUNING_PRESETS, DEFAULT_TUNING } from '../audio/tunings.js';
 import { GENRES } from '../songs/library/index.js';
-import { allSongs, getChart, songMeta, addUserSong, removeUserSong, getParsed } from '../songs/catalog.js';
+import { allSongs, getChart, songMeta, addUserSong, removeUserSong, getParsed, exportUserSongs, importUserSongs } from '../songs/catalog.js';
 import { getProgress, resetProgress } from '../songs/progress-store.js';
 import { splitTunes, parseABC } from '../songs/abc-parser.js';
 import { MAX_LEVEL } from '../songs/song-model.js';
@@ -652,7 +652,52 @@ export class SongBrowser {
     addBtn.addEventListener('click', () => this._importAbcText(ta.value, pasteOut));
     box.append(addBtn, pasteOut);
 
+    // Backup & restore (the whole My Songs library + scores, not a single tune)
+    box.appendChild(el('div', 'sb-label sb-label--block', 'Backup your library'));
+    box.appendChild(el('p', 'sb-muted', 'My Songs lives only in this browser. Export it to a file to keep a copy or move it to another device, and restore from that file later — restoring is safe to repeat, it won’t create duplicates.'));
+
+    const backupRow = el('div', 'sb-file-row');
+    const exportBtn = el('button', 'sb-btn', 'Export My Songs…');
+    exportBtn.addEventListener('click', () => this._exportUserSongs());
+    const restoreFile = el('input');
+    restoreFile.type = 'file';
+    restoreFile.accept = 'application/json,.json';
+    restoreFile.id = 'sb-backup-input';
+    const restoreLabel = el('label', 'sb-btn', 'Restore from file…');
+    restoreLabel.htmlFor = 'sb-backup-input';
+    backupRow.append(exportBtn, restoreLabel, restoreFile);
+    box.appendChild(backupRow);
+    const backupOut = el('div', 'sb-import-out');
+    box.appendChild(backupOut);
+
+    restoreFile.addEventListener('change', async () => {
+      const f = restoreFile.files?.[0];
+      if (!f) return;
+      backupOut.replaceChildren();
+      try {
+        const data = JSON.parse(await f.text());
+        const count = importUserSongs(data);
+        this._metaCache.clear();
+        backupOut.appendChild(el('div', 'sb-ok', `Restored ${count} song${count === 1 ? '' : 's'} to My Songs.`));
+      } catch (err) {
+        backupOut.appendChild(el('div', 'sb-error', `Restore failed: ${err.message}`));
+      }
+      restoreFile.value = '';
+    });
+
     pane.appendChild(box);
+  }
+
+  _exportUserSongs() {
+    const blob = new Blob([JSON.stringify(exportUserSongs(), null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = el('a');
+    a.href = url;
+    a.download = `violin-hero-my-songs-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   _importAbcText(text, out) {
